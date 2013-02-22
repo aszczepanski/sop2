@@ -33,7 +33,7 @@ void V(int semid) {
 }
 
 void write_log(int opt, int server_id, char client_name[MAX_NAME_SIZE]) {
-	if (fork() == 0) {
+//	if (fork() == 0) {
 		char serv_id[10];
 	
 		if (server_id == 0) strcpy(serv_id, "0");
@@ -70,16 +70,19 @@ void write_log(int opt, int server_id, char client_name[MAX_NAME_SIZE]) {
 				write(fd, "ALIVE: <", 8*sizeof(char));
 				write(fd, serv_id, strlen(serv_id));
 				write(fd, ">", 1*sizeof(char));
+				write(fd, "\n", 1*sizeof(char));
 			break;
 			case 2:
 				write(fd, "DOWN: <", 7*sizeof(char));
 				write(fd, serv_id, strlen(serv_id));
 				write(fd, ">", 1*sizeof(char));
+				write(fd, "\n", 1*sizeof(char));
 			break;
 			case 3:
 				write(fd, "KILLED_ZOMBIE: <", 16*sizeof(char));
 				write(fd, serv_id, strlen(serv_id));
 				write(fd, ">", 1*sizeof(char));
+				write(fd, "\n", 1*sizeof(char));
 			break;
 			case 4:
 				write(fd, "LOGGED_IN@<", 11*sizeof(char));
@@ -87,6 +90,7 @@ void write_log(int opt, int server_id, char client_name[MAX_NAME_SIZE]) {
 				write(fd, ">: <", 4*sizeof(char));
 				write(fd, client_name, strlen(client_name));
 				write(fd, ">", 1*sizeof(char));
+				write(fd, "\n", 1*sizeof(char));
 			break;
 			case 5:
 				write(fd, "LOGGED_OUT@<", 12*sizeof(char));
@@ -94,6 +98,7 @@ void write_log(int opt, int server_id, char client_name[MAX_NAME_SIZE]) {
 				write(fd, ">: <", 4*sizeof(char));
 				write(fd, client_name, strlen(client_name));
 				write(fd, ">", 1*sizeof(char));
+				write(fd, "\n", 1*sizeof(char));
 			break;
 			case 6:
 				write(fd, "DEAD@<", 6*sizeof(char));
@@ -101,6 +106,7 @@ void write_log(int opt, int server_id, char client_name[MAX_NAME_SIZE]) {
 				write(fd, ">: <", 4*sizeof(char));
 				write(fd, client_name, strlen(client_name));
 				write(fd, ">", 1*sizeof(char));
+				write(fd, "\n", 1*sizeof(char));
 			break;
 			}
 
@@ -110,8 +116,8 @@ void write_log(int opt, int server_id, char client_name[MAX_NAME_SIZE]) {
 	
 			V(semlog);
 		}
-		exit(0);
-	}
+//		exit(0);
+//	}
 }
 
 void register_repo() {
@@ -294,7 +300,7 @@ int add_client(char name[MAX_NAME_SIZE], int client_msgidd) {
 
 		repo->active_clients++;
 		strcpy(repo->clients[repo->active_clients-1].name, name);
-		repo->clients[repo->active_clients-1].server_id = server_users->server_msgid;
+		repo->clients[repo->active_clients-1].server_id = server_users->client_msgid;
 		strcpy(repo->clients[repo->active_clients-1].room, "");
 
 		int j;
@@ -352,9 +358,7 @@ int add_client(char name[MAX_NAME_SIZE], int client_msgidd) {
 }
 
 void signout_user(char name[MAX_NAME_SIZE]) {
-//	puts("Blocking");
 	P(semrepo);
-//	puts("Blocked");
 
 	char room_name[MAX_NAME_SIZE];
 
@@ -413,27 +417,80 @@ void signout_user(char name[MAX_NAME_SIZE]) {
 		repo->active_rooms--;
 	}	
 
-
-//	puts("Unblocking");
 	V(semrepo);
-//	puts("Unblocked");
 }
 
-void unregister_server(int server_id) {
+void unregister_server(int server_id) { // client_msgid
 	P(semrepo);
 
 	int i, clients=0;
+
 	char name[MAX_CLIENTS][MAX_NAME_SIZE];
 	for (i=0; i<repo->active_clients; i++) {
 		if (repo->clients[i].server_id == server_id) {
+			printf("client to force log out %s\n", repo->clients[i].name);
 			strcpy(name[clients++], repo->clients[i].name);
 		}
 	}
 
 	V(semrepo);
 
-	for (i=0; i<clients; i++) {
-		signout_user(name[i]);
+	int this = 0;
+	P(semusers);
+	if (server_users->client_msgid == server_id) this = 1;
+	V(semusers);
+
+	if (this == 1) {
+		for (i=0; i<clients; i++) {
+			signout_user(name[i]);
+		}
+	}
+	else {
+		for (i=0; i<clients; i++) {
+		P(semrepo);
+		
+		char room_name[MAX_NAME_SIZE];
+	
+		repo->active_clients--;
+		int j, found = 0;
+		for (j=0; j<repo->active_clients+1; j++) {
+			if (found == 1) {
+				strcpy(repo->clients[j-1].name, repo->clients[j].name);
+				repo->clients[j-1].server_id = repo->clients[j].server_id;
+				strcpy(repo->clients[j-1].room, repo->clients[j].room);
+			}
+			else if (strcmp(name[i], repo->clients[j].name) == 0) {
+				strcpy(room_name, repo->clients[j].room);
+				found = 1;
+			}
+		}
+
+		for(j=0; j<repo->active_servers; j++) {
+			if (repo->servers[j].client_msgid == server_id) {
+				repo->servers[j].clients--;
+				break;
+			}
+		}
+
+		found = 0;
+		for (j=0; j<repo->active_rooms; j++) {
+			if (found == 1) {
+				strcpy(repo->rooms[j-1].name, repo->rooms[j].name);
+				repo->rooms[j-1].clients = repo->rooms[j].clients;
+			}
+			else if (strcmp(repo->rooms[j].name, room_name) == 0) {
+				repo->rooms[j].clients--;
+				if (repo->rooms[j].clients == 0) found = 1;
+				else break;
+			}
+		}
+	
+		if (found == 1) {
+			repo->active_rooms--;
+		}
+
+		V(semrepo);
+		}
 	}
 
 	P(semrepo);
@@ -445,7 +502,7 @@ void unregister_server(int server_id) {
 			repo->servers[i-1].server_msgid = repo->servers[i].server_msgid;
 			repo->servers[i-1].clients = repo->servers[i].clients;
 		}
-		else if (repo->servers[i].server_msgid == server_id) {
+		else if (repo->servers[i].client_msgid == server_id) {
 			found = 1;
 		}
 	}
@@ -511,8 +568,6 @@ void wait_for_login_request() {
 					write_log(4, client_msgid, client_request.client_name);
 				}
 	
-//				printf("SERVER status: %d\n", status_response.status);
-
 				V(semusers);
 
 				msgsnd(client_request.client_msgid, &status_response, sizeof(STATUS_RESPONSE)-sizeof(long), 0);
@@ -787,6 +842,7 @@ void wait_for_server_response() {
 			perror("error");
 		}
 		else {
+
 			P(semusers);
 
 			server_users->servers_queued++;
@@ -820,11 +876,12 @@ void heartbeat_server(int server_id) {
 			V(semusers);
 		}
 		else {
-			int server_id = server_users->client_msgid;
 			V(semusers);
+			puts("server down");
 			unregister_server(server_id);
 			write_log(3, server_id, NULL);
 		}
+
 
 		exit(0);
 	}
@@ -854,6 +911,7 @@ void wait_for_public_text_message_client() {
 				int i;
 				for (i=0; i<repo->active_servers; i++) { // TO DO delete zombies
 					int cur_server_id = repo->servers[i].server_msgid;
+					int cur_server_client_id = repo->servers[i].client_msgid;
 					V(semrepo);
 					if (msgsnd(cur_server_id, &text_message, sizeof(TEXT_MESSAGE)-sizeof(long), 0) != 0) {
 						perror("error");
@@ -862,7 +920,7 @@ void wait_for_public_text_message_client() {
 
 					printf("SERVER message sent to server: %d\n", cur_server_id);
 
-					heartbeat_server(cur_server_id);
+					heartbeat_server(cur_server_client_id);
 
 					P(semrepo);			
 				}
@@ -880,7 +938,7 @@ void wait_for_public_text_message_server() {
 	status_response.type = STATUS;
 
 	P(semusers);
-	status_response.status = server_users->server_msgid;
+	status_response.status = server_users->client_msgid;
 	V(semusers);
 
 	char cur_room[MAX_NAME_SIZE];
@@ -889,13 +947,28 @@ void wait_for_public_text_message_server() {
 		P(semusers);
 		int server_msgid = server_users->server_msgid;
 		V(semusers);
+	
+		int i,j;
+
 		if (msgrcv(server_msgid, &text_message, sizeof(TEXT_MESSAGE)-sizeof(long), PUBLIC, 0) == -1) {
 			perror("error");
 		}
 		else {
 			printf("SERVER message from server\n");		
+		
+			P(semrepo);
 
-			int i,j;
+			for (i=0; i<repo->active_servers; i++) {
+				if (repo->servers[i].client_msgid == text_message.from_id) {
+					if (msgsnd(repo->servers[i].server_msgid, &status_response, sizeof(STATUS_RESPONSE)-sizeof(long), 0) != 0) {
+						perror("error");
+					}
+					break;
+				}
+			}
+
+			V(semrepo);
+
 		
 			P(semrepo);
 
@@ -925,18 +998,6 @@ void wait_for_public_text_message_server() {
 
 			V(semrepo);
 	
-			P(semrepo);
-
-			for (i=0; i<repo->active_servers; i++) {
-				if (repo->servers[i].client_msgid == text_message.from_id) {
-					if (msgsnd(repo->servers[i].server_msgid, &status_response, sizeof(STATUS_RESPONSE)-sizeof(long), 0) != 0) {
-						perror("error");
-					}
-
-				}
-			}
-
-			V(semrepo);
 		}
 	}
 }
@@ -978,13 +1039,20 @@ void wait_for_private_text_message_client() {
 
 			if (!on_list) {
 			
-				int serv_id = -1;
+				int serv_id = -1, serv_client_id = -1;
 
 				P(semrepo);
 	
 				for (i=0; i<repo->active_clients; i++) {
 					if (strcmp(repo->clients[i].name, text_message.to) == 0) {
-						serv_id = repo->clients[i].server_id;
+						serv_client_id = repo->clients[i].server_id;
+						int j;
+						for (j=0; j<repo->active_servers; j++) {
+							if (repo->servers[j].client_msgid == serv_client_id) {
+								serv_id = repo->servers[j].server_msgid;
+								break;
+							}
+						}
 						break;
 					}
 				}
@@ -1000,7 +1068,7 @@ void wait_for_private_text_message_client() {
 						perror("error");
 					}
 
-					heartbeat_server(serv_id);
+					heartbeat_server(serv_client_id);
 				}
 			}
 		}
@@ -1013,7 +1081,7 @@ void wait_for_private_text_message_server() {
 	status_response.type = STATUS;
 
 	P(semusers);
-	status_response.status = server_users->server_msgid;
+	status_response.status = server_users->client_msgid;
 	V(semusers);
 
 	int i;
@@ -1028,6 +1096,7 @@ void wait_for_private_text_message_server() {
 			perror("error");
 		}
 		else {
+			puts("wyslane potwierdzenie");
 			P(semrepo);
 
 			for (i=0; i<repo->active_servers; i++) {
@@ -1051,6 +1120,8 @@ void wait_for_private_text_message_server() {
 					on_list = 1;
 					text_message.from_id = 0;
 
+					printf("SERVER %s found\n", text_message.to);
+
 					if (msgsnd(server_users->client_id[i], &text_message, sizeof(TEXT_MESSAGE)-sizeof(long), 0) != 0) {
 						perror("error");
 					}
@@ -1061,13 +1132,20 @@ void wait_for_private_text_message_server() {
 			V(semusers);
 		
 			if (!on_list) {			
-				int serv_id = -1;
+				int serv_id = -1, serv_client_id = -1;
 
 				P(semrepo);
 
 				for (i=0; i<repo->active_clients; i++) {
 					if (strcmp(repo->clients[i].name, text_message.to) == 0) {
-						serv_id = repo->clients[i].server_id;
+						serv_client_id = repo->clients[i].server_id;
+						int j;
+						for (j=0; j<repo->active_servers; j++) {
+							if (repo->servers[j].client_msgid == serv_client_id) {
+								serv_id = repo->servers[j].server_msgid;
+								break;
+							}
+						}
 						break;
 					}
 				}
@@ -1087,7 +1165,7 @@ void wait_for_private_text_message_server() {
 						perror("error");
 					}
 
-					heartbeat_server(serv_id);
+					heartbeat_server(serv_client_id);
 				}
 			}
 		}
@@ -1228,18 +1306,18 @@ int server() {
 		for (i=0; i<p; i++) {
 			kill(pids[i], SIGKILL);
 		}
+	
 
 		P(semusers);
 		msgctl(server_users->client_msgid, IPC_RMID, NULL);
 		msgctl(server_users->server_msgid, IPC_RMID, NULL);
-		int server_msgid = server_users->server_msgid;	
 		int client_msgid = server_users->client_msgid;
 		V(semusers);
 	
 		write_log(2, client_msgid, NULL);
 
-		unregister_server(server_msgid);
-		
+		unregister_server(client_msgid);
+
 		semctl(semusers, 0, IPC_RMID, NULL);
 		
 		shmdt(server_users);

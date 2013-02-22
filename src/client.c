@@ -538,7 +538,9 @@ void wait_for_incomming_private_messages() {
 	V2(sem_client_repo);
 
 	while (1) {
-		msgrcv(client_id, &text_message, sizeof(TEXT_MESSAGE)-sizeof(long), PRIVATE, 0);
+		if (msgrcv(client_id, &text_message, sizeof(TEXT_MESSAGE)-sizeof(long), PRIVATE, 0) == -1) {
+			exit(0);
+		}
 
 		printf("CLIENT Private message from %s to %s at %s", text_message.from_name, text_message.to, ctime(&text_message.time));
 		printf("text: %s\n", text_message.text);
@@ -553,7 +555,9 @@ void wait_for_incomming_public_messages() {
 	V2(sem_client_repo);
 
 	while (1) {
-		msgrcv(client_id, &text_message, sizeof(TEXT_MESSAGE)-sizeof(long), PUBLIC, 0);
+		if (msgrcv(client_id, &text_message, sizeof(TEXT_MESSAGE)-sizeof(long), PUBLIC, 0) == -1) {
+			exit(0);
+		}
 
 		printf("CLIENT Public message from %s at %s", text_message.from_name, ctime(&text_message.time));
 		printf("text: %s\n", text_message.text);
@@ -576,6 +580,7 @@ void heartbeat() {
 	while (1) {
 		if (msgrcv(client_request.client_msgid, &status_response, sizeof(STATUS_RESPONSE)-sizeof(long), HEARTBEAT, 0) == -1) {
 			perror("error");
+			exit(0);
 		}
 		else {
 //			printf("CLIENT heartbeat from %d\n", status_response.status);
